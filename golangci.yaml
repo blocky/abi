@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  default: standard
+
+# formatters:
+#   gci:
+#     sections:
+#       - default # Default section: contains all imports that could not be matched to another section type.
+#       - standard # Standard section: captures all standard packages.
+#       # - prefix(github.com/blocky/abi) # Custom section: groups all imports with the specified Prefix.
+
+run:
+  # Default timeout for all linters.
+  timeout: 3m
