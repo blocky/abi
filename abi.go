@@ -12,13 +12,13 @@ func isNonZero(b []byte) bool {
 	return slices.ContainsFunc(b, func(b byte) bool { return b != 0 })
 }
 
-func ABIEncodeUint64(v uint64) []byte {
+func EncodeUint64(v uint64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, v)
 	return append(make([]byte, 24), buf...)
 }
 
-func ABIDecodeUint64(v []byte) (uint64, error) {
+func DecodeUint64(v []byte) (uint64, error) {
 	if len(v) != 32 {
 		return 0, errors.New("uint64 encoding must contain 32 bytes")
 	}
@@ -42,7 +42,7 @@ func padRight(data []byte, length int) ([]byte, error) {
 	return padded, nil
 }
 
-func ABISliceHeader() []byte {
+func SliceHeader() []byte {
 	return append(make([]byte, 31), 0x20)
 }
 
@@ -51,11 +51,11 @@ func nextMultipleOf32(n int) int {
 	return n + (32-remainder)%32
 }
 
-// ABIEncodeBytes encodes a byte slice (in the go sense) to a bytes type
+// EncodeBytes encodes a byte slice (in the go sense) to a bytes type
 // (in the evm sense).
-func ABIEncodeBytes(v []byte) ([]byte, error) {
+func EncodeBytes(v []byte) ([]byte, error) {
 	vLen := len(v)
-	head := ABIEncodeUint64(uint64(vLen))
+	head := EncodeUint64(uint64(vLen))
 	tail, err := padRight(v, nextMultipleOf32(vLen))
 	if err != nil {
 		return nil, fmt.Errorf("padding, %w", err)
@@ -64,10 +64,10 @@ func ABIEncodeBytes(v []byte) ([]byte, error) {
 	return append(head, tail...), nil
 }
 
-// ABIDecodeBytes decodes a byte slice (in the go sense) from an
+// DecodeBytes decodes a byte slice (in the go sense) from an
 // abi encoding of Bytes (int the evm sense).  It is the inverse operation
-// of ABIEncodeBytes.
-func ABIDecodeBytes(abiEncoded []byte) ([]byte, error) {
+// of EncodeBytes.
+func DecodeBytes(abiEncoded []byte) ([]byte, error) {
 	// We specify a few names to help understand the layout.
 	// Note that the '|' is not part of the layout, it is just a visual aid.
 	// | head (32 bytes) | tail (padded to a multiple of 32 bytes) |
@@ -95,7 +95,7 @@ func ABIDecodeBytes(abiEncoded []byte) ([]byte, error) {
 	tail := abiEncoded[headLen:]
 
 	// unpack the head
-	dataLen, err := ABIDecodeUint64(head)
+	dataLen, err := DecodeUint64(head)
 	if err != nil {
 		return nil, fmt.Errorf("decoding data length, %w", err)
 	}
@@ -122,23 +122,23 @@ func ABIDecodeBytes(abiEncoded []byte) ([]byte, error) {
 	return dst, nil
 }
 
-func ABIEncodeSliceOfBytes(v [][]byte) ([]byte, error) {
+func EncodeSliceOfBytes(v [][]byte) ([]byte, error) {
 	var head, tail bytes.Buffer
 
 	// collect the data needed for the head
 	vLen := uint64(len(v))
 
 	// write the head
-	head.Write(ABISliceHeader())
-	head.Write(ABIEncodeUint64(vLen))
+	head.Write(SliceHeader())
+	head.Write(EncodeUint64(vLen))
 
 	// Compute the initial offset.
 	// The 32*vLen are for the start locations of each element in the slice.
 	// We will add this data to the head as we build up the tail.
 	offset := uint64(32 * vLen)
 	for i, vi := range v {
-		head.Write(ABIEncodeUint64(offset))
-		encoded, err := ABIEncodeBytes(vi)
+		head.Write(EncodeUint64(offset))
+		encoded, err := EncodeBytes(vi)
 		if err != nil {
 			return nil, fmt.Errorf("encoding element %d, %w", i, err)
 		}
@@ -150,7 +150,7 @@ func ABIEncodeSliceOfBytes(v [][]byte) ([]byte, error) {
 	return append(head.Bytes(), tail.Bytes()...), nil
 }
 
-func ABIDecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
+func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// We specify a few names to help understand the layout.
 	// Note that the '|' is not part of the layout, it is just a visual aid.
 	//
@@ -188,7 +188,7 @@ func ABIDecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// unpack the head
 	typeBytes := head[:32]
 	eltCountBytes := head[32:]
-	eltCount, err := ABIDecodeUint64(eltCountBytes)
+	eltCount, err := DecodeUint64(eltCountBytes)
 	if err != nil {
 		return nil, fmt.Errorf("decoding element count, %w", err)
 	}
@@ -196,7 +196,7 @@ func ABIDecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// validate the head data
 	offsetsLen := 32 * eltCount
 	switch {
-	case !bytes.Equal(typeBytes, ABISliceHeader()):
+	case !bytes.Equal(typeBytes, SliceHeader()):
 		return nil, errors.New("not a slice type")
 	case offsetsLen > tailLen:
 		return nil, fmt.Errorf("tail too short for %d elements", eltCount)
@@ -205,7 +205,7 @@ func ABIDecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// unpack the offsets
 	offsets := make([]uint64, eltCount+1)
 	for i := range eltCount {
-		offset, err := ABIDecodeUint64(tail[i*32 : (i+1)*32])
+		offset, err := DecodeUint64(tail[i*32 : (i+1)*32])
 		switch {
 		case err != nil:
 			return nil, fmt.Errorf("decoding offset for index %d, %w", i, err)
@@ -226,7 +226,7 @@ func ABIDecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("start %d greater than end %d", start, end)
 		}
 
-		results[i], err = ABIDecodeBytes(tail[start:end])
+		results[i], err = DecodeBytes(tail[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("decoding element %d, %w", i, err)
 		}
@@ -242,7 +242,7 @@ type EncoderResult struct {
 
 type EncoderFunc func() (EncoderResult, error)
 
-func ABIEncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
+func EncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
 	var head, tail bytes.Buffer
 
 	offset := uint64(32 * len(encoders))
@@ -257,7 +257,7 @@ func ABIEncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
 			continue
 		}
 
-		head.Write(ABIEncodeUint64(offset))
+		head.Write(EncodeUint64(offset))
 		tail.Write(result.data)
 		offset += uint64(len(result.data))
 	}
@@ -265,16 +265,16 @@ func ABIEncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
 	return append(head.Bytes(), tail.Bytes()...), nil
 }
 
-func ABIEncodeTupleFuncUint64(v uint64) EncoderFunc {
+func EncodeTupleFuncUint64(v uint64) EncoderFunc {
 	return func() (EncoderResult, error) {
-		data := ABIEncodeUint64(v)
+		data := EncodeUint64(v)
 		return EncoderResult{indirect: false, data: data}, nil
 	}
 }
 
-func ABIEncodeTupleFuncBytes(v []byte) EncoderFunc {
+func EncodeTupleFuncBytes(v []byte) EncoderFunc {
 	return func() (EncoderResult, error) {
-		data, err := ABIEncodeBytes(v)
+		data, err := EncodeBytes(v)
 		if err != nil {
 			return EncoderResult{}, fmt.Errorf("encoding: %w", err)
 		}
@@ -294,24 +294,24 @@ func NewTupleEncoder() *TupleEncoder {
 }
 
 func (e *TupleEncoder) Uint64(v uint64) *TupleEncoder {
-	encoder := ABIEncodeTupleFuncUint64(v)
+	encoder := EncodeTupleFuncUint64(v)
 	e.encoders = append(e.encoders, encoder)
 	return e
 }
 
 func (e *TupleEncoder) Bytes(v []byte) *TupleEncoder {
-	encoder := ABIEncodeTupleFuncBytes(v)
+	encoder := EncodeTupleFuncBytes(v)
 	e.encoders = append(e.encoders, encoder)
 	return e
 }
 
 func (e *TupleEncoder) Encode() ([]byte, error) {
-	return ABIEncodeTuple(e.encoders...)
+	return EncodeTuple(e.encoders...)
 }
 
 type DecoderFunc func(cur, full []byte) error
 
-func ABIDecodeTuple(data []byte, decoders ...DecoderFunc) error {
+func DecodeTuple(data []byte, decoders ...DecoderFunc) error {
 	// We specify a few names to help understand the layout.
 	// Note that the '|' is not part of the layout, it is just a visual aid.
 	//
@@ -344,9 +344,9 @@ func ABIDecodeTuple(data []byte, decoders ...DecoderFunc) error {
 	return nil
 }
 
-func ABIDecodeTupleFuncUint64(v *uint64) DecoderFunc {
+func DecodeTupleFuncUint64(v *uint64) DecoderFunc {
 	return func(cur, full []byte) error {
-		vv, err := ABIDecodeUint64(cur[:])
+		vv, err := DecodeUint64(cur[:])
 		if err != nil {
 			return fmt.Errorf("decoding: %w", err)
 		}
@@ -356,7 +356,7 @@ func ABIDecodeTupleFuncUint64(v *uint64) DecoderFunc {
 	}
 }
 
-func ABIDecodeTupleFuncBytes(v *[]byte) DecoderFunc {
+func DecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 	return func(cur, full []byte) error {
 		// We specify a few names to help understand the layout.
 		// Note that the '|' is not part of the layout, it is just a visual aid.
@@ -379,7 +379,7 @@ func ABIDecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 		// so that we know which slice from full to decode.
 		// And then decode using some helper functions.
 
-		offset, err := ABIDecodeUint64(cur)
+		offset, err := DecodeUint64(cur)
 		switch {
 		case err != nil:
 			return fmt.Errorf("decoding offset: %w", err)
@@ -388,7 +388,7 @@ func ABIDecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 		}
 
 		byteCountBytes := full[offset : offset+32]
-		byteCount, err := ABIDecodeUint64(byteCountBytes)
+		byteCount, err := DecodeUint64(byteCountBytes)
 		if err != nil {
 			return fmt.Errorf("decoding length : %w", err)
 		}
@@ -401,7 +401,7 @@ func ABIDecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 		}
 
 		alignedBytes := full[start:end]
-		vv, err := ABIDecodeBytes(alignedBytes)
+		vv, err := DecodeBytes(alignedBytes)
 		if err != nil {
 			return fmt.Errorf("decoding bytes: %w", err)
 		}
@@ -422,17 +422,17 @@ func NewTupleDecoder() *TupleDecoder {
 }
 
 func (d *TupleDecoder) Decode(data []byte) error {
-	return ABIDecodeTuple(data, d.decoders...)
+	return DecodeTuple(data, d.decoders...)
 }
 
 func (d *TupleDecoder) Uint64(v *uint64) *TupleDecoder {
-	decoder := ABIDecodeTupleFuncUint64(v)
+	decoder := DecodeTupleFuncUint64(v)
 	d.decoders = append(d.decoders, decoder)
 	return d
 }
 
 func (d *TupleDecoder) Bytes(v *[]byte) *TupleDecoder {
-	decoder := ABIDecodeTupleFuncBytes(v)
+	decoder := DecodeTupleFuncBytes(v)
 	d.decoders = append(d.decoders, decoder)
 	return d
 }
