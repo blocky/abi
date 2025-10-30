@@ -139,4 +139,3 @@ project to add additional test data.
 6. Commit your changes (`git commit -am 'Add amazing feature'`)
 7. Push to the branch (`git push origin feature/amazing-feature`)
 8. Open a Pull Request
-...
