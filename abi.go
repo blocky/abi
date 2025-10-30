@@ -1,3 +1,5 @@
+// Package abi provides a minimal Go library for ABI encoding and decoding
+// without reflection or code generation.
 package abi
 
 import (
@@ -12,12 +14,16 @@ func isNonZero(b []byte) bool {
 	return slices.ContainsFunc(b, func(b byte) bool { return b != 0 })
 }
 
+// EncodeUint64 encodes a uint64 to 32-byte ABI format. It is the inverse
+// operation of DecodeUint64.
 func EncodeUint64(v uint64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, v)
 	return append(make([]byte, 24), buf...)
 }
 
+// DecodeUint64 decodes ABI bytes back to uint64. It is the inverse operation
+// of EncodeUint64.
 func DecodeUint64(v []byte) (uint64, error) {
 	if len(v) != 32 {
 		return 0, errors.New("uint64 encoding must contain 32 bytes")
@@ -42,6 +48,7 @@ func padRight(data []byte, length int) ([]byte, error) {
 	return padded, nil
 }
 
+// SliceHeader returns the header for a slice of bytes.
 func SliceHeader() []byte {
 	return append(make([]byte, 31), 0x20)
 }
@@ -52,7 +59,7 @@ func nextMultipleOf32(n int) int {
 }
 
 // EncodeBytes encodes a byte slice (in the go sense) to a bytes type
-// (in the evm sense).
+// (in the evm sense).  It is the inverse operation of DecodeBytes.
 func EncodeBytes(v []byte) ([]byte, error) {
 	vLen := len(v)
 	head := EncodeUint64(uint64(vLen))
@@ -65,7 +72,7 @@ func EncodeBytes(v []byte) ([]byte, error) {
 }
 
 // DecodeBytes decodes a byte slice (in the go sense) from an
-// abi encoding of Bytes (int the evm sense).  It is the inverse operation
+// abi encoding of Bytes (in the evm sense).  It is the inverse operation
 // of EncodeBytes.
 func DecodeBytes(abiEncoded []byte) ([]byte, error) {
 	// We specify a few names to help understand the layout.
@@ -122,6 +129,9 @@ func DecodeBytes(abiEncoded []byte) ([]byte, error) {
 	return dst, nil
 }
 
+// EncodeSliceOfBytes encodes a slice of byte arrays (in the go sense) to a
+// bytes type (in the evm sense).  It is the inverse operation of
+// DecodeSliceOfBytes.
 func EncodeSliceOfBytes(v [][]byte) ([]byte, error) {
 	var head, tail bytes.Buffer
 
@@ -150,6 +160,9 @@ func EncodeSliceOfBytes(v [][]byte) ([]byte, error) {
 	return append(head.Bytes(), tail.Bytes()...), nil
 }
 
+// DecodeSliceOfBytes decodes a slice of byte arrays (in the go sense) from an
+// abi encoding of Bytes (in the evm sense).  It is the inverse operation
+// of EncodeSliceOfBytes.
 func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// We specify a few names to help understand the layout.
 	// Note that the '|' is not part of the layout, it is just a visual aid.
@@ -235,13 +248,22 @@ func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	return results, nil
 }
 
+// EncoderResult is the result of encoding a single element.  It is intended
+// to be used as the return value of an EncoderFunc. While it is exported,
+// it is not intended to be used directly by users as it is part of the
+// glue for the TupleEncoder and TupleDecoder.
 type EncoderResult struct {
 	indirect bool
 	data     []byte
 }
 
+// EncoderFunc is a function that encodes a single element.  It works in
+// concert with the TupleEncoder to encode a tuple.
 type EncoderFunc func() (EncoderResult, error)
 
+// EncodeTuple encodes a tuple of elements.  While one can use the EncodeTuple
+// function directly, because of its simpler interface, it is recommended to
+// use the TupleEncoder instead.
 func EncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
 	var head, tail bytes.Buffer
 
@@ -265,6 +287,7 @@ func EncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
 	return append(head.Bytes(), tail.Bytes()...), nil
 }
 
+// EncodeTupleFuncUint64 encodes a uint64 as the k-th element of a tuple.
 func EncodeTupleFuncUint64(v uint64) EncoderFunc {
 	return func() (EncoderResult, error) {
 		data := EncodeUint64(v)
@@ -272,6 +295,7 @@ func EncodeTupleFuncUint64(v uint64) EncoderFunc {
 	}
 }
 
+// EncodeTupleFuncBytes encodes a byte slice as the k-th element of a tuple.
 func EncodeTupleFuncBytes(v []byte) EncoderFunc {
 	return func() (EncoderResult, error) {
 		data, err := EncodeBytes(v)
@@ -283,34 +307,45 @@ func EncodeTupleFuncBytes(v []byte) EncoderFunc {
 	}
 }
 
+// TupleEncoder is a helper for encoding a tuple of elements.  The struct
+// is used in building a fluent API for encoding a tuple.
 type TupleEncoder struct {
 	encoders []EncoderFunc
 }
 
+// NewTupleEncoder creates a new TupleEncoder.
 func NewTupleEncoder() *TupleEncoder {
 	return &TupleEncoder{
 		encoders: []EncoderFunc{},
 	}
 }
 
+// Uint64 encodes a uint64 as the k-th element of a tuple.
 func (e *TupleEncoder) Uint64(v uint64) *TupleEncoder {
 	encoder := EncodeTupleFuncUint64(v)
 	e.encoders = append(e.encoders, encoder)
 	return e
 }
 
+// Bytes encodes a byte slice as the k-th element of a tuple.
 func (e *TupleEncoder) Bytes(v []byte) *TupleEncoder {
 	encoder := EncodeTupleFuncBytes(v)
 	e.encoders = append(e.encoders, encoder)
 	return e
 }
 
+// Encode encodes the tuple.
 func (e *TupleEncoder) Encode() ([]byte, error) {
 	return EncodeTuple(e.encoders...)
 }
 
+// DecoderFunc is a function that decodes a single element.  It works in
+// concert with the TupleDecoder to decode a tuple.
 type DecoderFunc func(cur, full []byte) error
 
+// DecodeTuple decodes a tuple of elements.  While one can use the DecodeTuple
+// function directly, because of its simpler interface, it is recommended to
+// use the TupleDecoder instead.
 func DecodeTuple(data []byte, decoders ...DecoderFunc) error {
 	// We specify a few names to help understand the layout.
 	// Note that the '|' is not part of the layout, it is just a visual aid.
@@ -344,6 +379,7 @@ func DecodeTuple(data []byte, decoders ...DecoderFunc) error {
 	return nil
 }
 
+// DecodeTupleFuncUint64 decodes a uint64 as the k-th element of a tuple.
 func DecodeTupleFuncUint64(v *uint64) DecoderFunc {
 	return func(cur, full []byte) error {
 		vv, err := DecodeUint64(cur[:])
@@ -356,6 +392,7 @@ func DecodeTupleFuncUint64(v *uint64) DecoderFunc {
 	}
 }
 
+// DecodeTupleFuncBytes decodes a byte slice as the k-th element of a tuple.
 func DecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 	return func(cur, full []byte) error {
 		// We specify a few names to help understand the layout.
@@ -411,26 +448,32 @@ func DecodeTupleFuncBytes(v *[]byte) DecoderFunc {
 	}
 }
 
+// TupleDecoder is a helper for decoding a tuple of elements.  The struct
+// is used in building a fluent API for decoding a tuple.
 type TupleDecoder struct {
 	decoders []DecoderFunc
 }
 
+// NewTupleDecoder creates a new TupleDecoder.
 func NewTupleDecoder() *TupleDecoder {
 	return &TupleDecoder{
 		decoders: []DecoderFunc{},
 	}
 }
 
+// Decode decodes the tuple.
 func (d *TupleDecoder) Decode(data []byte) error {
 	return DecodeTuple(data, d.decoders...)
 }
 
+// Uint64 decodes a uint64 as the k-th element of a tuple.
 func (d *TupleDecoder) Uint64(v *uint64) *TupleDecoder {
 	decoder := DecodeTupleFuncUint64(v)
 	d.decoders = append(d.decoders, decoder)
 	return d
 }
 
+// Bytes decodes a byte slice as the k-th element of a tuple.
 func (d *TupleDecoder) Bytes(v *[]byte) *TupleDecoder {
 	decoder := DecodeTupleFuncBytes(v)
 	d.decoders = append(d.decoders, decoder)
