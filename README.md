@@ -88,7 +88,7 @@ decodedBytes, err := abi.DecodeBytes(encodedBytes)
 
 - **`uint64`** - 64-bit unsigned integers
 - **`bytes`** - Dynamic byte arrays
-- **`[]bytes`** - Array of bytes arrays
+- **`[]bytes`** - Array of byte arrays
 - **Tuples** - Complex structures combining multiple types
 
 With more planned, feel free to open an issue or PR!
