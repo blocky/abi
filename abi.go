@@ -1,3 +1,5 @@
+// Package abi provides a minimal Go library for ABI encoding and decoding
+// without reflection or code generation.
 package abi
 
 import (
