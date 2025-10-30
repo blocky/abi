@@ -2,6 +2,8 @@ package abi_test
 
 import (
 	"bytes"
+	"fmt"
+	"log"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -640,4 +642,91 @@ func TestTupleEncoderDecoder_RoundTrip(t *testing.T) {
 			assert.Equal(t, input, got)
 		})
 	}
+}
+
+func ExampleTupleEncoder() {
+	// Encode a tuple (uint64, bytes, uint64)
+	encoded, err := abi.NewTupleEncoder().
+		Uint64(42).
+		Bytes([]byte("hello world")).
+		Uint64(123).
+		Encode()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Encoded tuple: %x\n", encoded)
+
+	// Decode the tuple back
+	var num1 uint64
+	var data []byte
+	var num2 uint64
+
+	err = abi.NewTupleDecoder().
+		Uint64(&num1).
+		Bytes(&data).
+		Uint64(&num2).
+		Decode(encoded)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Decoded: %d, %s, %d\n", num1, data, num2)
+	// Output:
+	// Encoded tuple: 000000000000000000000000000000000000000000000000000000000000002a0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000007b000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000
+	// Decoded: 42, hello world, 123
+}
+
+func ExampleEncodeUint64() {
+	encoded := abi.EncodeUint64(42)
+	decoded, err := abi.DecodeUint64(encoded)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Encoded: %x\n", encoded)
+	fmt.Printf("Decoded: %d\n", decoded)
+	// Output:
+	// Encoded: 000000000000000000000000000000000000000000000000000000000000002a
+	// Decoded: 42
+}
+
+func ExampleEncodeBytes() {
+	encodedBytes, err := abi.EncodeBytes([]byte("hello"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	decodedBytes, err := abi.DecodeBytes(encodedBytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Encoded: %x\n", encodedBytes)
+	fmt.Printf("Decoded: %s\n", decodedBytes)
+	// Output:
+	// Encoded: 000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+	// Decoded: hello
+}
+
+func ExampleEncodeSliceOfBytes() {
+	data := [][]byte{
+		[]byte("first"),
+		[]byte("second"),
+		[]byte("third"),
+	}
+	encoded, err := abi.EncodeSliceOfBytes(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	decoded, err := abi.DecodeSliceOfBytes(encoded)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	success := bytes.Equal(data[0], decoded[0]) &&
+		bytes.Equal(data[1], decoded[1]) &&
+		bytes.Equal(data[2], decoded[2])
+	fmt.Printf("Roundtrip successful: %t\n", success)
+	// Output: Roundtrip successful: true
 }
