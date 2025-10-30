@@ -66,7 +66,8 @@ func main() {
     }
 
     fmt.Printf("Decoded: %d, %s, %d\n", num1, data, num2)
-    // Output: 42, hello world, 123
+    // Output: 
+    // Decoded: 42, hello world, 123
 }
 ```
 
