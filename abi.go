@@ -3,23 +3,39 @@
 package abi
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"slices"
 )
 
 func isNonZero(b []byte) bool {
-	return slices.ContainsFunc(b, func(b byte) bool { return b != 0 })
+	for i := range b {
+		if b[i] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// sliceEqual checks equality of two byte slices.
+func sliceEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // EncodeUint64 encodes a uint64 to 32-byte ABI format. It is the inverse
 // operation of DecodeUint64.
 func EncodeUint64(v uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, v)
-	return append(make([]byte, 24), buf...)
+	out := make([]byte, 32)
+	binary.BigEndian.PutUint64(out[24:], v)
+	return out
 }
 
 // DecodeUint64 decodes ABI bytes back to uint64. It is the inverse operation
@@ -29,12 +45,13 @@ func DecodeUint64(v []byte) (uint64, error) {
 		return 0, errors.New("uint64 encoding must contain 32 bytes")
 	}
 
-	padding, data := v[:24], v[24:]
-	if isNonZero(padding) {
-		return 0, fmt.Errorf("padding contains non-zero values")
+	for i := range 24 {
+		if v[i] != 0 {
+			return 0, fmt.Errorf("padding contains non-zero values")
+		}
 	}
 
-	return binary.BigEndian.Uint64(data), nil
+	return binary.BigEndian.Uint64(v[24:32]), nil
 }
 
 func padRight(data []byte, length int) ([]byte, error) {
@@ -48,9 +65,18 @@ func padRight(data []byte, length int) ([]byte, error) {
 	return padded, nil
 }
 
+// precomputed 32-byte slice header where last byte is 0x20
+var precomputedSliceHeader = func() []byte {
+	s := make([]byte, 32)
+	s[31] = 0x20
+	return s
+}()
+
 // SliceHeader returns the header for a slice of bytes.
 func SliceHeader() []byte {
-	return append(make([]byte, 31), 0x20)
+	out := make([]byte, 32)
+	copy(out, precomputedSliceHeader)
+	return out
 }
 
 func nextMultipleOf32(n int) int {
@@ -133,31 +159,42 @@ func DecodeBytes(abiEncoded []byte) ([]byte, error) {
 // bytes type (in the evm sense).  It is the inverse operation of
 // DecodeSliceOfBytes.
 func EncodeSliceOfBytes(v [][]byte) ([]byte, error) {
-	var head, tail bytes.Buffer
+	k := len(v)
 
-	// collect the data needed for the head
-	vLen := uint64(len(v))
-
-	// write the head
-	head.Write(SliceHeader())
-	head.Write(EncodeUint64(vLen))
-
-	// Compute the initial offset.
-	// The 32*vLen are for the start locations of each element in the slice.
-	// We will add this data to the head as we build up the tail.
-	offset := uint64(32 * vLen)
-	for i, vi := range v {
-		head.Write(EncodeUint64(offset))
-		encoded, err := EncodeBytes(vi)
+	// head size = 32 (slice header) + 32 (length) + 32*k (offsets)
+	headSize := 64 + 32*k
+	// compute tail size by encoding each element (encoded = 32 + paddedData)
+	tailSize := 0
+	encodedElems := make([][]byte, k)
+	for i := range k {
+		enc, err := EncodeBytes(v[i])
 		if err != nil {
 			return nil, fmt.Errorf("encoding element %d, %w", i, err)
 		}
-
-		offset += uint64(len(encoded))
-		tail.Write(encoded)
+		encodedElems[i] = enc
+		tailSize += len(enc)
 	}
 
-	return append(head.Bytes(), tail.Bytes()...), nil
+	// allocate final buffer in one shot
+	out := make([]byte, 0, headSize+tailSize)
+
+	// write head: slice header, count
+	out = append(out, precomputedSliceHeader...)
+	out = append(out, EncodeUint64(uint64(k))...)
+
+	// offsets start at offset = 32*k (head after the 64 initial bytes)
+	offset := uint64(32 * k)
+	for i := range k {
+		out = append(out, EncodeUint64(offset)...)
+		offset += uint64(len(encodedElems[i]))
+	}
+
+	// append tail
+	for i := range k {
+		out = append(out, encodedElems[i]...)
+	}
+
+	return out, nil
 }
 
 // DecodeSliceOfBytes decodes a slice of byte arrays (in the go sense) from an
@@ -184,8 +221,9 @@ func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	// and each element is padded to a multiple of 32 bytes,
 	// a valid input must always have a length that is a multiple of 32.
 
-	headLen := uint64(64)
-	abiEncodedLen := uint64(len(abiEncoded))
+	headLen := 64
+	abiEncodedLen := len(abiEncoded)
+
 	switch {
 	case abiEncodedLen < headLen:
 		return nil, errors.New("not long enough to have a head")
@@ -193,56 +231,65 @@ func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("invalid length '%d' not 32-byte aligned", abiEncodedLen)
 	}
 
-	// unpack the abi encoded data
 	head := abiEncoded[:headLen]
 	tail := abiEncoded[headLen:]
-	tailLen := uint64(len(tail))
+	tailLen := len(tail)
 
-	// unpack the head
 	typeBytes := head[:32]
-	eltCountBytes := head[32:]
+	eltCountBytes := head[32:64]
+
 	eltCount, err := DecodeUint64(eltCountBytes)
 	if err != nil {
 		return nil, fmt.Errorf("decoding element count, %w", err)
 	}
 
-	// validate the head data
+	// validate head data
 	offsetsLen := 32 * eltCount
-	switch {
-	case !bytes.Equal(typeBytes, SliceHeader()):
+	if !sliceEqual(typeBytes, precomputedSliceHeader) {
 		return nil, errors.New("not a slice type")
-	case offsetsLen > tailLen:
+	}
+	if offsetsLen > uint64(tailLen) {
 		return nil, fmt.Errorf("tail too short for %d elements", eltCount)
 	}
 
-	// unpack the offsets
-	offsets := make([]uint64, eltCount+1)
-	for i := range eltCount {
-		offset, err := DecodeUint64(tail[i*32 : (i+1)*32])
-		switch {
-		case err != nil:
+	// parse offsets (there are eltCount offsets)
+	k := int(eltCount)
+	offsets := make([]uint64, k+1) // +1 sentinel for tail length
+	for i := range k {
+		start := i * 32
+		end := start + 32
+		if end > len(tail) {
+			return nil, fmt.Errorf("decoding offset for index %d: out of range", i)
+		}
+		offset, err := DecodeUint64(tail[start:end])
+		if err != nil {
 			return nil, fmt.Errorf("decoding offset for index %d, %w", i, err)
-		case offset >= tailLen:
+		}
+		if offset >= uint64(tailLen) {
 			return nil, fmt.Errorf("offset at index %d out of bounds", i)
 		}
-
 		offsets[i] = offset
 	}
-	offsets[eltCount] = tailLen
+	offsets[k] = uint64(tailLen)
 
 	// use offsets to read and decode each encoded byte array
-	results := make([][]byte, eltCount)
-	for i := range eltCount {
-		start := offsets[i]
-		end := offsets[i+1]
+	results := make([][]byte, k)
+	for i := range k {
+		start := int(offsets[i])
+		end := int(offsets[i+1])
 		if start >= end {
 			return nil, fmt.Errorf("start %d greater than end %d", start, end)
 		}
+		// bounds check
+		if end > len(tail) {
+			return nil, fmt.Errorf("end is out of bounds")
+		}
 
-		results[i], err = DecodeBytes(tail[start:end])
+		r, err := DecodeBytes(tail[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("decoding element %d, %w", i, err)
 		}
+		results[i] = r
 	}
 
 	return results, nil
@@ -265,26 +312,46 @@ type EncoderFunc func() (EncoderResult, error)
 // function directly, because of its simpler interface, it is recommended to
 // use the TupleEncoder instead.
 func EncodeTuple(encoders ...EncoderFunc) ([]byte, error) {
-	var head, tail bytes.Buffer
+	n := len(encoders)
+	// head is 32*n, initial offset for tail starts after the head
+	offset := uint64(32 * n)
 
-	offset := uint64(32 * len(encoders))
-	for _, encode := range encoders {
-		result, err := encode()
+	// First pass: collect results and compute total tail size
+	results := make([]EncoderResult, n)
+	tailSize := 0
+	for i := range n {
+		res, err := encoders[i]()
 		if err != nil {
 			return nil, fmt.Errorf("encoding: %w", err)
 		}
-
-		if !result.indirect {
-			head.Write(result.data)
-			continue
+		results[i] = res
+		if res.indirect {
+			tailSize += len(res.data)
 		}
-
-		head.Write(EncodeUint64(offset))
-		tail.Write(result.data)
-		offset += uint64(len(result.data))
 	}
 
-	return append(head.Bytes(), tail.Bytes()...), nil
+	// allocate output once: head + tail
+	out := make([]byte, 0, 32*n+tailSize)
+
+	// Second pass: write head (inline values or offsets) and collect tail
+	for i := range n {
+		res := results[i]
+		if !res.indirect {
+			out = append(out, res.data...)
+			continue
+		}
+		out = append(out, EncodeUint64(offset)...)
+		offset += uint64(len(res.data))
+	}
+
+	// append tail bytes
+	for i := range n {
+		if results[i].indirect {
+			out = append(out, results[i].data...)
+		}
+	}
+
+	return out, nil
 }
 
 // EncodeTupleFuncUint64 encodes a uint64 as the k-th element of a tuple.
