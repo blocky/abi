@@ -153,7 +153,6 @@ func BenchmarkEncodeTuple(b *testing.B) {
 }
 
 func BenchmarkDecodeTuple(b *testing.B) {
-	// helper to build encoded tuple with n uint64 values
 	makeEncoded := func(n int) []byte {
 		encs := make([]EncoderFunc, n)
 		for i := range n {
@@ -257,7 +256,6 @@ func BenchmarkDecodeTupleFuncUint64(b *testing.B) {
 }
 
 func BenchmarkDecodeTupleFuncBytes(b *testing.B) {
-	// helper to build encoded data for one bytes element
 	makeEncoded := func(v []byte) (cur, full []byte) {
 		enc := EncodeTupleFuncBytes(v)
 		full, _ = EncodeTuple(enc)
