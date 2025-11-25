@@ -261,10 +261,10 @@ func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("decoding offset for index %d: out of range", i)
 		}
 		offset, err := DecodeUint64(tail[start:end])
-		if err != nil {
+		switch {
+		case err != nil:
 			return nil, fmt.Errorf("decoding offset for index %d, %w", i, err)
-		}
-		if offset >= uint64(tailLen) {
+		case offset >= uint64(tailLen):
 			return nil, fmt.Errorf("offset at index %d out of bounds", i)
 		}
 		offsets[i] = offset
@@ -276,11 +276,10 @@ func DecodeSliceOfBytes(abiEncoded []byte) ([][]byte, error) {
 	for i := range k {
 		start := int(offsets[i])
 		end := int(offsets[i+1])
-		if start >= end {
+		switch {
+		case start >= end:
 			return nil, fmt.Errorf("start %d greater than end %d", start, end)
-		}
-		// bounds check
-		if end > len(tail) {
+		case end > len(tail):
 			return nil, fmt.Errorf("end is out of bounds")
 		}
 
