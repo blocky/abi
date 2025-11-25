@@ -45,13 +45,12 @@ func DecodeUint64(v []byte) (uint64, error) {
 		return 0, errors.New("uint64 encoding must contain 32 bytes")
 	}
 
-	for i := range 24 {
-		if v[i] != 0 {
-			return 0, fmt.Errorf("padding contains non-zero values")
-		}
+	padding, data := v[:24], v[24:]
+	if isNonZero(padding) {
+		return 0, fmt.Errorf("padding contains non-zero values")
 	}
 
-	return binary.BigEndian.Uint64(v[24:32]), nil
+	return binary.BigEndian.Uint64(data), nil
 }
 
 func padRight(data []byte, length int) ([]byte, error) {
